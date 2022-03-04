@@ -12,3 +12,6 @@ spec:
   - name: latest
     referencePolicy:
       type: Source
+  - name: static-kas
+    referencePolicy:
+      type: Source
