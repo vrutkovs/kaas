@@ -1,6 +1,7 @@
 package kaas
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/rand"
@@ -64,6 +65,8 @@ func TryLogin(kubeconfigPath string) (*k8s.Clientset, *routeClient.RouteV1Client
 func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (string, error) {
 	replicas := int32(1)
 	sharePIDNamespace := true
+	ctx := context.TODO()
+	createOpts := metav1.CreateOptions{}
 
 	// Declare and create new deployment
 	deployment := &appsv1.Deployment{
@@ -172,7 +175,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 			},
 		},
 	}
-	_, err := s.K8sClient.AppsV1().Deployments(s.Namespace).Create(deployment)
+	_, err := s.K8sClient.AppsV1().Deployments(s.Namespace).Create(ctx, deployment, createOpts)
 	if err != nil {
 		return "", fmt.Errorf("failed to create new deployment: %s", err.Error())
 	}
@@ -197,7 +200,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 			},
 		},
 	}
-	_, err = s.K8sClient.CoreV1().Services(s.Namespace).Create(service)
+	_, err = s.K8sClient.CoreV1().Services(s.Namespace).Create(ctx, service, createOpts)
 	if err != nil {
 		return "", fmt.Errorf("failed to create new service: %s", err.Error())
 	}
@@ -223,7 +226,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 			},
 		},
 	}
-	route, err := s.RouteClient.Routes(s.Namespace).Create(kasRoute)
+	route, err := s.RouteClient.Routes(s.Namespace).Create(ctx, kasRoute, createOpts)
 	if err != nil {
 		return "", fmt.Errorf("failed to create route: %v", err)
 	}
@@ -235,7 +238,7 @@ func (s *ServerSettings) waitForDeploymentReady(appLabel string) error {
 	depName := fmt.Sprintf("%s-kas", appLabel)
 
 	return wait.PollImmediate(time.Second, deploymentRolloutTime, func() (bool, error) {
-		dep, err := s.K8sClient.AppsV1().Deployments(s.Namespace).Get(depName, metav1.GetOptions{})
+		dep, err := s.K8sClient.AppsV1().Deployments(s.Namespace).Get(context.TODO(), depName, metav1.GetOptions{})
 		if err != nil {
 			return true, fmt.Errorf("failed to fetch deployment: %v", err)
 		}
@@ -245,15 +248,17 @@ func (s *ServerSettings) waitForDeploymentReady(appLabel string) error {
 
 func (s *ServerSettings) deletePods(appLabel string) (string, error) {
 	actionLog := []string{}
+	ctx := context.TODO()
+	delOptions := metav1.DeleteOptions{}
 
 	// Delete service
 	listOpts := metav1.ListOptions{LabelSelector: fmt.Sprintf("app=%s", appLabel)}
-	svcList, err := s.K8sClient.CoreV1().Services(s.Namespace).List(listOpts)
+	svcList, err := s.K8sClient.CoreV1().Services(s.Namespace).List(ctx, listOpts)
 	if err != nil || svcList.Items == nil {
 		return "", fmt.Errorf("failed to find services: %v", err)
 	}
 	for _, svc := range svcList.Items {
-		err := s.K8sClient.CoreV1().Services(s.Namespace).Delete(svc.Name, &metav1.DeleteOptions{})
+		err := s.K8sClient.CoreV1().Services(s.Namespace).Delete(ctx, svc.Name, delOptions)
 		if err != nil {
 			return strings.Join(actionLog, "\n"),
 				fmt.Errorf("error removing service %s: %v", svc.Name, err)
@@ -262,12 +267,12 @@ func (s *ServerSettings) deletePods(appLabel string) (string, error) {
 	}
 
 	// Delete deployment
-	depList, err := s.K8sClient.AppsV1().Deployments(s.Namespace).List(listOpts)
+	depList, err := s.K8sClient.AppsV1().Deployments(s.Namespace).List(ctx, listOpts)
 	if err != nil || depList.Items == nil {
 		return "", fmt.Errorf("failed to find deployments: %v", err)
 	}
 	for _, dep := range depList.Items {
-		err := s.K8sClient.AppsV1().Deployments(s.Namespace).Delete(dep.Name, &metav1.DeleteOptions{})
+		err := s.K8sClient.AppsV1().Deployments(s.Namespace).Delete(ctx, dep.Name, delOptions)
 		if err != nil {
 			return strings.Join(actionLog, "\n"),
 				fmt.Errorf("error removing deployment %s: %v", dep.Name, err)
@@ -276,12 +281,12 @@ func (s *ServerSettings) deletePods(appLabel string) (string, error) {
 	}
 
 	// Delete configmap
-	cmList, err := s.K8sClient.CoreV1().ConfigMaps(s.Namespace).List(listOpts)
+	cmList, err := s.K8sClient.CoreV1().ConfigMaps(s.Namespace).List(ctx, listOpts)
 	if err != nil || cmList.Items == nil {
 		return "", fmt.Errorf("failed to find config maps: %v", err)
 	}
 	for _, cm := range cmList.Items {
-		err := s.K8sClient.CoreV1().ConfigMaps(s.Namespace).Delete(cm.Name, &metav1.DeleteOptions{})
+		err := s.K8sClient.CoreV1().ConfigMaps(s.Namespace).Delete(ctx, cm.Name, delOptions)
 		if err != nil {
 			return strings.Join(actionLog, "\n"),
 				fmt.Errorf("error removing config map %s: %v", cm.Name, err)
@@ -290,12 +295,12 @@ func (s *ServerSettings) deletePods(appLabel string) (string, error) {
 	}
 
 	// Delete route
-	routeList, err := s.RouteClient.Routes(s.Namespace).List(listOpts)
+	routeList, err := s.RouteClient.Routes(s.Namespace).List(ctx, listOpts)
 	if err != nil || routeList.Items == nil {
 		return "", fmt.Errorf("failed to find routes: %v", err)
 	}
 	for _, route := range routeList.Items {
-		err := s.RouteClient.Routes(s.Namespace).Delete(route.Name, &metav1.DeleteOptions{})
+		err := s.RouteClient.Routes(s.Namespace).Delete(ctx, route.Name, delOptions)
 		if err != nil {
 			return strings.Join(actionLog, "\n"),
 				fmt.Errorf("error removing route %s: %v", route.Name, err)
@@ -310,7 +315,7 @@ func (s *ServerSettings) deletePods(appLabel string) (string, error) {
 func (s *ServerSettings) CleanupOldDeployements() {
 	log.Println("Cleaning up old deployments")
 	// List all deployments, find those which are older than n hours and call 'deletePods'
-	depsList, err := s.K8sClient.AppsV1().Deployments(s.Namespace).List(metav1.ListOptions{})
+	depsList, err := s.K8sClient.AppsV1().Deployments(s.Namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil || depsList.Items == nil {
 		return
 	}
@@ -336,7 +341,7 @@ func (s *ServerSettings) CleanupOldDeployements() {
 
 // GetResourceQuota updates current resource quota setting
 func (s *ServerSettings) GetResourceQuota() error {
-	rquota, err := s.K8sClient.CoreV1().ResourceQuotas(s.Namespace).Get(s.RQuotaName, metav1.GetOptions{})
+	rquota, err := s.K8sClient.CoreV1().ResourceQuotas(s.Namespace).Get(context.TODO(), s.RQuotaName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get ResourceQuota: %v", err)
 	}
@@ -352,7 +357,7 @@ func (s *ServerSettings) GetResourceQuota() error {
 func (s *ServerSettings) WatchResourceQuota() {
 	for {
 		// TODO: Make sure we watch correct resourceQuota
-		watcher, err := s.K8sClient.CoreV1().ResourceQuotas(s.Namespace).Watch(metav1.ListOptions{})
+		watcher, err := s.K8sClient.CoreV1().ResourceQuotas(s.Namespace).Watch(context.TODO(), metav1.ListOptions{})
 		if err != nil {
 			log.Printf("Failed to setup ResourceQuota watcher: %v", err)
 			continue
