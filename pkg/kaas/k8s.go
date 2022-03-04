@@ -72,6 +72,9 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 			Labels: map[string]string{
 				"app": appLabel,
 			},
+			Annotations: map[string]string{
+				"alpha.image.policy.openshift.io/resolve-names": "*",
+			},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
