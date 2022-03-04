@@ -93,6 +93,7 @@ class Message extends React.Component {
         return (
           <ReactBootstrap.Alert className="alert-small" variant="primary">
             <ReactBootstrap.Alert.Heading>Kubeconfig</ReactBootstrap.Alert.Heading>
+            <a download="kubeconfig-kaas" href="data:text/yaml;charset=utf-8;{Buffer.from(this.props.message).toString('base64')}">Download kubeconfig</a>
             <hr/>
             <pre>{this.props.message}</pre>
           </ReactBootstrap.Alert>
