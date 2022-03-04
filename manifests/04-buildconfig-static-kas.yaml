@@ -18,7 +18,7 @@ spec:
   source:
     git:
       ref: master
-      uri: https://github.com/alvaromaleman/static-kas
+      uri: https://github.com/alvaroaleman/static-kas
     type: Git
   strategy:
     type: Docker
