@@ -8,13 +8,6 @@ import (
 	k8s "k8s.io/client-go/kubernetes"
 )
 
-// GrafanaSettings stores grafana config
-type GrafanaSettings struct {
-	URL    string `json:"url"`
-	Token  string `json:"token"`
-	Cookie string `json:"cookie"`
-}
-
 // RQuotaStatus stores ResourceQuota info
 type RQuotaStatus struct {
 	Used int64 `json:"used"`
@@ -30,7 +23,6 @@ type ServerSettings struct {
 	RQStatus    *RQuotaStatus
 	Conns       map[string]*websocket.Conn
 	Datasources map[string]int
-	Grafana     *GrafanaSettings
 }
 
 // ProwJSON stores test start / finished timestamp

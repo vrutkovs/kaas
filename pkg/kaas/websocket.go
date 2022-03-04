@@ -1,15 +1,10 @@
 package kaas
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -114,10 +109,6 @@ func (s *ServerSettings) removeProm(conn *websocket.Conn, appName string) {
 		sendWSMessage(conn, "failure", fmt.Sprintf("%s\n%s", output, err.Error()))
 		return
 	}
-	dsID := s.Datasources[appName]
-	if err := s.removeDataSource(dsID); err != nil {
-		sendWSMessage(conn, "failure", err.Error())
-	}
 	delete(s.Datasources, appName)
 	sendWSMessage(conn, "done", "Prometheus instance removed")
 }
@@ -173,110 +164,9 @@ func (s *ServerSettings) createNewPrometheus(conn *websocket.Conn, rawURL string
 		return
 	}
 
-	dsID, err := s.addDataSource(appLabel, promRoute)
-	if err == nil {
-		s.Datasources[appLabel] = dsID
-		sendWSMessage(conn, "status", fmt.Sprintf("Added %s datasource at %s", appLabel, s.Grafana.URL))
-	} else {
-		if s.Grafana.URL != "" && s.Grafana.Token != "" && s.Grafana.Cookie != "" {
-			sendWSMessage(conn, "failure", err.Error())
-		}
-	}
 	data := map[string]string{
 		"hash": appLabel,
 		"url":  hackedPrometheusURL,
 	}
 	sendWSMessageWithData(conn, "done", "Pod is ready", data)
-}
-
-// GrafanaDatasource represents a datasource to be created
-type GrafanaDatasource struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	URL       string `json:"url"`
-	Access    string `json:"access"`
-	BasicAuth bool   `json:"basicAuth"`
-}
-
-// GrafanaDatasourceResponse represents response from grafana
-type GrafanaDatasourceResponse struct {
-	DataSource struct {
-		ID int `json:"id"`
-	} `json:"datasource"`
-}
-
-func (s *ServerSettings) grafanaRequest(method, url string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.Grafana.Token))
-	req.Header.Set("Cookie", s.Grafana.Cookie)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	return req, nil
-}
-
-func (s *ServerSettings) addDataSource(appLabel, promRoute string) (int, error) {
-	ds := &GrafanaDatasource{
-		Name:      appLabel,
-		URL:       promRoute,
-		Type:      "prometheus",
-		Access:    "proxy",
-		BasicAuth: false,
-	}
-	data, err := json.Marshal(ds)
-	if err != nil {
-		return 0, nil
-	}
-	var netClient = &http.Client{
-		Timeout: time.Second * 10,
-	}
-	apiURL := fmt.Sprintf("%s/api/datasources", s.Grafana.URL)
-	req, err := s.grafanaRequest("POST", apiURL, bytes.NewBuffer(data))
-	if err != nil {
-		return 0, fmt.Errorf("failed to construct POST request to %s: %v", apiURL, err)
-	}
-	resp, err := netClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("failed to perform request %s: %v", apiURL, err)
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read body: %v", err)
-	}
-	dsResponse := &GrafanaDatasourceResponse{}
-	if err := json.Unmarshal(body, dsResponse); err != nil {
-		return 0, fmt.Errorf("failed to unmarshal response %s : %v", body, err)
-	}
-	return dsResponse.DataSource.ID, nil
-}
-
-func (s *ServerSettings) removeDataSource(id int) error {
-	var netClient = &http.Client{
-		Timeout: time.Second * 10,
-	}
-	apiURL := fmt.Sprintf("%s/api/datasources/%d", s.Grafana.URL, id)
-	req, err := s.grafanaRequest("DELETE", apiURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to construct DELETE request to %s: %v", apiURL, err)
-	}
-	resp, err := netClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to perform request %s: %v", apiURL, err)
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read body: %v", err)
-	}
-	dsResponse := &GrafanaDatasourceResponse{}
-	if err := json.Unmarshal(body, dsResponse); err != nil {
-		return fmt.Errorf("failed to unmarshal response %s : %v", body, err)
-	}
-	return nil
-
 }

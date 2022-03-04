@@ -43,12 +43,6 @@ func main() {
 
 	rqStatus := kaas.RQuotaStatus{}
 
-	grafana := kaas.GrafanaSettings{
-		URL:    os.Getenv("GRAFANA_URL"),
-		Token:  os.Getenv("GRAFANA_TOKEN"),
-		Cookie: os.Getenv("GRAFANA_COOKIE"),
-	}
-
 	server := &kaas.ServerSettings{
 		K8sClient:   k8sC,
 		RouteClient: routeC,
@@ -57,7 +51,6 @@ func main() {
 		RQStatus:    &rqStatus,
 		Conns:       make(map[string]*websocket.Conn),
 		Datasources: make(map[string]int),
-		Grafana:     &grafana,
 	}
 	if server.GetResourceQuota() != nil {
 		fmt.Print("Failed to read initial resource quota")
