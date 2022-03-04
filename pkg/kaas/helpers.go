@@ -1,9 +1,7 @@
 package kaas
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -17,16 +15,16 @@ import (
 )
 
 const (
-	charset       = "abcdefghijklmnopqrstuvwxyz"
-	randLength    = 8
-	promTemplates = "prom-templates"
-	gcsLinkToken  = "gcsweb"
-	gcsPrefix     = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com"
-	storagePrefix = "https://storage.googleapis.com"
-	artifactsPath = "artifacts"
-	promTarPath   = "metrics/prometheus.tar"
-	extraPath     = "gather-extra"
-	e2ePrefix     = "e2e"
+	charset              = "abcdefghijklmnopqrstuvwxyz"
+	randLength           = 8
+	promTemplates        = "prom-templates"
+	gcsLinkToken         = "gcsweb"
+	gcsPrefix            = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com"
+	storagePrefix        = "https://storage.googleapis.com"
+	artifactsPath        = "artifacts"
+	mustGatherPath       = "must-gather/must-gather.tar"
+	mustGatherFolderPath = "gather-must-gather"
+	e2ePrefix            = "e2e"
 )
 
 func generateAppLabel() string {
@@ -75,7 +73,7 @@ func getLinksFromURL(url string) ([]string, error) {
 	}
 }
 
-func ensureMetricsURL(url string) (int, error) {
+func ensureMustGatherURL(url string) (int, error) {
 	var netClient = &http.Client{
 		Timeout: time.Second * 10,
 	}
@@ -86,10 +84,10 @@ func ensureMetricsURL(url string) (int, error) {
 	return resp.StatusCode, err
 }
 
-func getMetricsTar(conn *websocket.Conn, url string) (ProwInfo, error) {
+func getMustGatherTar(conn *websocket.Conn, url string) (ProwInfo, error) {
 	sendWSMessage(conn, "status", fmt.Sprintf("Fetching %s", url))
 	// Ensure initial URL is valid
-	statusCode, err := ensureMetricsURL(url)
+	statusCode, err := ensureMustGatherURL(url)
 	if err != nil || statusCode != http.StatusOK {
 		return ProwInfo{}, fmt.Errorf("failed to fetch url %s: code %d, %s", url, statusCode, err)
 	}
@@ -98,35 +96,35 @@ func getMetricsTar(conn *websocket.Conn, url string) (ProwInfo, error) {
 	if err != nil {
 		return prowInfo, err
 	}
-	expectedMetricsURL := prowInfo.MetricsURL
+	expectedMustGatherURL := prowInfo.MustGatherURL
 
-	sendWSMessage(conn, "status", fmt.Sprintf("Found prometheus archive at %s", expectedMetricsURL))
+	sendWSMessage(conn, "status", fmt.Sprintf("Found must-gather archive at %s", expectedMustGatherURL))
 
 	// Check that metrics/prometheus.tar can be fetched and it non-null
-	sendWSMessage(conn, "status", "Checking if prometheus archive can be fetched")
+	sendWSMessage(conn, "status", "Checking if must-gather archive can be fetched")
 	var netClient = &http.Client{
 		Timeout: time.Second * 10,
 	}
-	resp, err := netClient.Head(expectedMetricsURL)
+	resp, err := netClient.Head(expectedMustGatherURL)
 	if err != nil {
-		return prowInfo, fmt.Errorf("failed to fetch %s: %v", expectedMetricsURL, err)
+		return prowInfo, fmt.Errorf("failed to fetch %s: %v", expectedMustGatherURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: returned %s", expectedMetricsURL, resp.Status)
+		return prowInfo, fmt.Errorf("failed to check archive at %s: returned %s", expectedMustGatherURL, resp.Status)
 	}
 
 	contentLength := resp.Header.Get("content-length")
 	if contentLength == "" {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: no content length returned", expectedMetricsURL)
+		return prowInfo, fmt.Errorf("failed to check archive at %s: no content length returned", expectedMustGatherURL)
 	}
 	length, err := strconv.Atoi(contentLength)
 	if err != nil {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: invalid content-length: %v", expectedMetricsURL, err)
+		return prowInfo, fmt.Errorf("failed to check archive at %s: invalid content-length: %v", expectedMustGatherURL, err)
 	}
 	if length == 0 {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: archive is empty", expectedMetricsURL)
+		return prowInfo, fmt.Errorf("failed to check archive at %s: archive is empty", expectedMustGatherURL)
 	}
 	return prowInfo, nil
 }
@@ -135,13 +133,10 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 	prowInfo := ProwInfo{}
 
 	// Is it a direct prom tarball link?
-	if strings.HasSuffix(baseURL, promTarPath) {
+	if strings.HasSuffix(baseURL, mustGatherPath) {
 		// Make it a fetchable URL if it's a gcsweb URL
 		tempMetricsURL := strings.Replace(baseURL, gcsPrefix+"/gcs", storagePrefix, -1)
-		prowInfo.MetricsURL = tempMetricsURL
-		// there is no way to find out the time via direct tarball link, use current time
-		prowInfo.Finished = time.Now()
-		prowInfo.Started = time.Now()
+		prowInfo.MustGatherURL = tempMetricsURL
 		return prowInfo, nil
 	}
 
@@ -171,20 +166,7 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 		return prowInfo, fmt.Errorf("failed to parse GCS URL %s: %v", gcsTempURL, err)
 	}
 
-	// Fetch start and finish time of the test
-	startTime, err := getTimeStampFromProwJSON(fmt.Sprintf("%s/started.json", gcsURL))
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to fetch test start time: %v", err)
-	}
-	prowInfo.Started = startTime
-
-	finishedTime, err := getTimeStampFromProwJSON(fmt.Sprintf("%s/finished.json", gcsURL))
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to fetch test finshed time: %v", err)
-	}
-	prowInfo.Finished = finishedTime
-
-	sendWSMessage(conn, "status", fmt.Sprintf("Found start/stop markers at %s", gcsURL))
+	sendWSMessage(conn, "status", fmt.Sprintf("Found GCS URL %s", gcsURL))
 
 	// Check that 'artifacts' folder is present
 	gcsToplinks, err := getLinksFromURL(gcsURL.String())
@@ -257,7 +239,7 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 			lastPathSegment = linkSplitBySlash[len(linkSplitBySlash)-2]
 		}
 		log.Printf("lastPathSection: %s", lastPathSegment)
-		if lastPathSegment == extraPath {
+		if lastPathSegment == mustGatherFolderPath {
 			tmpMetricsURL := gcsPrefix + link
 			gatherExtraURL, err = url.Parse(tmpMetricsURL)
 			if err != nil {
@@ -271,7 +253,7 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 		// New-style jobs may not have metrics available
 		e2eToplinks, err = getLinksFromURL(gatherExtraURL.String())
 		if err != nil {
-			return prowInfo, fmt.Errorf("failed to fetch gather-extra link at %s: %v", e2eURL, err)
+			return prowInfo, fmt.Errorf("failed to fetch gather-must-gather link at %s: %v", e2eURL, err)
 		}
 		if len(e2eToplinks) == 0 {
 			return prowInfo, fmt.Errorf("no top links at %s found", e2eURL)
@@ -296,41 +278,12 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 		e2eURL = gatherExtraURL
 	}
 
-	gcsMetricsURL := fmt.Sprintf("%s%s", e2eURL.String(), promTarPath)
+	gcsMetricsURL := fmt.Sprintf("%s%s", e2eURL.String(), mustGatherPath)
 	tempMetricsURL := strings.Replace(gcsMetricsURL, gcsPrefix+"/gcs", storagePrefix, -1)
 	expectedMetricsURL, err := url.Parse(tempMetricsURL)
 	if err != nil {
-		return prowInfo, fmt.Errorf("failed to parse metrics link %s: %v", tempMetricsURL, err)
+		return prowInfo, fmt.Errorf("failed to parse must-gather link %s: %v", tempMetricsURL, err)
 	}
-	prowInfo.MetricsURL = expectedMetricsURL.String()
+	prowInfo.MustGatherURL = expectedMetricsURL.String()
 	return prowInfo, nil
-}
-
-func getTimeStampFromProwJSON(rawURL string) (time.Time, error) {
-	jsonURL, err := url.Parse(rawURL)
-	if err != nil {
-		return time.Now(), fmt.Errorf("failed to fetch prow JSOM at %s: %v", rawURL, err)
-	}
-
-	var netClient = &http.Client{
-		Timeout: time.Second * 10,
-	}
-	resp, err := netClient.Get(jsonURL.String())
-	if err != nil {
-		return time.Now(), fmt.Errorf("failed to fetch %s: %v", jsonURL.String(), err)
-	}
-	defer resp.Body.Close()
-
-	body, readErr := ioutil.ReadAll(resp.Body)
-	if readErr != nil {
-		return time.Now(), fmt.Errorf("failed to read body at %s: %v", jsonURL.String(), err)
-	}
-
-	var prowInfo ProwJSON
-	err = json.Unmarshal(body, &prowInfo)
-	if err != nil {
-		return time.Now(), fmt.Errorf("failed to unmarshal json %s: %v", body, err)
-	}
-
-	return time.Unix(int64(prowInfo.Timestamp), 0), nil
 }

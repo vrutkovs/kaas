@@ -24,7 +24,7 @@ import (
 const (
 	deploymentRolloutTime = 5 * time.Minute
 	deploymentLifetime    = 8 * time.Hour
-	prometheusImage       = "quay.io/prometheus/prometheus:v2.33.0"
+	prometheusImage       = "kaas:static-kas"
 	ciFetcherImage        = "registry.access.redhat.com/ubi8/ubi:8.5"
 )
 
@@ -61,14 +61,14 @@ func TryLogin(kubeconfigPath string) (*k8s.Clientset, *routeClient.RouteV1Client
 
 }
 
-func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (string, error) {
+func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (string, error) {
 	replicas := int32(1)
 	sharePIDNamespace := true
 
 	// Declare and create new deployment
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s-prom", appLabel),
+			Name: fmt.Sprintf("%s-kas", appLabel),
 			Labels: map[string]string{
 				"app": appLabel,
 			},
@@ -94,33 +94,37 @@ func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (stri
 							Command: []string{
 								"/bin/bash",
 								"-c",
-								"set -uxo pipefail && umask 0000 && curl -sL ${PROMTAR} | tar xvz -m --no-overwrite-dir",
+								"set -uxo pipefail && umask 0000 && curl -sL ${MUSTGATHERTAR} | tar xvz -m --no-overwrite-dir",
 							},
-							WorkingDir: "/prometheus/",
+							WorkingDir: "/must-gather/",
 							Env: []corev1.EnvVar{
 								{
-									Name:  "PROMTAR",
-									Value: metricsTar,
+									Name:  "MUSTGATHERTAR",
+									Value: mustGatherTar,
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "prometheus-storage-volume",
-									MountPath: "/prometheus/",
+									Name:      "must-gather-volume",
+									MountPath: "/must-gather/",
 								},
 							},
 						},
 					},
 					Containers: []corev1.Container{
 						{
-							Name:  "prometheus",
+							Name:  "kas",
 							Image: prometheusImage,
 							Ports: []corev1.ContainerPort{
 								{
-									Name:          "webui",
+									Name:          "ui",
 									Protocol:      corev1.ProtocolTCP,
-									ContainerPort: 9090,
+									ContainerPort: 8080,
 								},
+							},
+							Args: []string{
+								"--base-dir",
+								"/must-gather/",
 							},
 							ReadinessProbe: &corev1.Probe{
 								TimeoutSeconds:   1,
@@ -130,7 +134,7 @@ func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (stri
 								Handler: corev1.Handler{
 									HTTPGet: &corev1.HTTPGetAction{
 										Path:   "/",
-										Port:   intstr.FromInt(9090),
+										Port:   intstr.FromInt(8080),
 										Scheme: "HTTP",
 									},
 								},
@@ -143,8 +147,8 @@ func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (stri
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "prometheus-storage-volume",
-									MountPath: "/prometheus/",
+									Name:      "must-gather-volume",
+									MountPath: "/must-gather/",
 								},
 							},
 						},
@@ -152,7 +156,7 @@ func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (stri
 					ShareProcessNamespace: &sharePIDNamespace,
 					Volumes: []corev1.Volume{
 						{
-							Name: "prometheus-storage-volume",
+							Name: "must-gather-volume",
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
@@ -177,7 +181,7 @@ func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (stri
 		Spec: corev1.ServiceSpec{
 			Ports: []corev1.ServicePort{
 				{
-					Port:     9090,
+					Port:     8080,
 					Protocol: corev1.ProtocolTCP,
 					Name:     "webui",
 				},
@@ -205,7 +209,7 @@ func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (stri
 				Name: appLabel,
 			},
 			Port: &routeApi.RoutePort{
-				TargetPort: intstr.FromInt(9090),
+				TargetPort: intstr.FromInt(8080),
 			},
 			TLS: &routeApi.TLSConfig{
 				Termination:                   routeApi.TLSTerminationEdge,
@@ -222,7 +226,7 @@ func (s *ServerSettings) launchPromApp(appLabel string, metricsTar string) (stri
 }
 
 func (s *ServerSettings) waitForDeploymentReady(appLabel string) error {
-	depName := fmt.Sprintf("%s-prom", appLabel)
+	depName := fmt.Sprintf("%s-kas", appLabel)
 
 	return wait.PollImmediate(time.Second, deploymentRolloutTime, func() (bool, error) {
 		dep, err := s.K8sClient.AppsV1().Deployments(s.Namespace).Get(depName, metav1.GetOptions{})

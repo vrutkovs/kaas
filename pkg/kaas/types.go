@@ -1,8 +1,6 @@
 package kaas
 
 import (
-	"time"
-
 	"github.com/gorilla/websocket"
 	routeClient "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
 	k8s "k8s.io/client-go/kubernetes"
@@ -32,7 +30,5 @@ type ProwJSON struct {
 
 // ProwInfo stores all links and data collected via scanning for metrics
 type ProwInfo struct {
-	Started    time.Time
-	Finished   time.Time
-	MetricsURL string
+	MustGatherURL string
 }

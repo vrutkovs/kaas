@@ -22,6 +22,20 @@ var wsupgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+const kubeConfigTemplate = `
+apiVersion: v1
+clusters:
+- cluster:
+    server: %s
+  name: static-kas
+contexts:
+- context:
+    cluster: static-kas
+    namespace: default
+  name: static-kas
+current-context: static-kas
+kind: Config`
+
 func sendWSMessage(conn *websocket.Conn, action string, message string) {
 	response := WSMessage{
 		Action:  action,
@@ -86,9 +100,9 @@ func (s *ServerSettings) HandleStatusViaWS(c *gin.Context) {
 			s.Conns[conn.RemoteAddr().String()] = conn
 			go s.sendResourceQuotaUpdate()
 		case "new":
-			go s.createNewPrometheus(conn, m.Message)
+			go s.newKAS(conn, m.Message)
 		case "delete":
-			go s.removeProm(conn, m.Message)
+			go s.removeKAS(conn, m.Message)
 		}
 	}
 }
@@ -103,23 +117,23 @@ func (s *ServerSettings) sendResourceQuotaUpdate() {
 	}
 }
 
-func (s *ServerSettings) removeProm(conn *websocket.Conn, appName string) {
+func (s *ServerSettings) removeKAS(conn *websocket.Conn, appName string) {
 	sendWSMessage(conn, "status", fmt.Sprintf("Removing app %s", appName))
 	if output, err := s.deletePods(appName); err != nil {
 		sendWSMessage(conn, "failure", fmt.Sprintf("%s\n%s", output, err.Error()))
 		return
 	}
 	delete(s.Datasources, appName)
-	sendWSMessage(conn, "done", "Prometheus instance removed")
+	sendWSMessage(conn, "done", "KAS instance removed")
 }
 
-func (s *ServerSettings) createNewPrometheus(conn *websocket.Conn, rawURL string) {
+func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 	// Generate a unique app label
 	appLabel := generateAppLabel()
 	sendWSMessage(conn, "app-label", appLabel)
 
 	// Fetch metrics.tar path if prow URL specified
-	prowInfo, err := getMetricsTar(conn, rawURL)
+	prowInfo, err := getMustGatherTar(conn, rawURL)
 	if err != nil {
 		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to find metrics archive: %s", err.Error()))
 		return
@@ -128,35 +142,22 @@ func (s *ServerSettings) createNewPrometheus(conn *websocket.Conn, rawURL string
 	// Create a new app in the namespace and return route
 	sendWSMessage(conn, "status", "Deploying a new prometheus instance")
 
-	var promRoute string
-	metricsTar := prowInfo.MetricsURL
-	if promRoute, err = s.launchPromApp(appLabel, metricsTar); err != nil {
+	var kasRoute string
+	mustGatherTar := prowInfo.MustGatherURL
+	if kasRoute, err = s.launchKASApp(appLabel, mustGatherTar); err != nil {
 		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to run a new app: %s", err.Error()))
 		return
 	}
-	// Calculate a range in minutes between start and finish
-	elapsed := prowInfo.Finished.Sub(prowInfo.Started)
-
 	// Send a sample query so that user would not have to rediscover start and finished time
-	prometheusURL, err := url.Parse(promRoute)
+	_, err = url.Parse(kasRoute)
 	if err != nil {
 		sendWSMessage(conn, "failure", err.Error())
 		return
 	}
 
-	params := url.Values{}
-	// expr has to be first param
-	// params.Add("g0.expr", "up")
-	params.Add("g0.tab", "0")
-	params.Add("g0.stacked", "0")
-	params.Add("g0.range_input", elapsed.String())
-	params.Add("g0.end_input", prowInfo.Finished.Format("2006-01-02 15:04"))
-	// prometheusURL.Path += "graph/g0.expr=up"
-	prometheusURL.RawQuery = params.Encode()
-
-	//sendWSMessage(conn, "link", prometheusURL.String())
-	hackedPrometheusURL := fmt.Sprintf("%s/graph?g0.expr=up&%s", promRoute, params.Encode())
-	sendWSMessage(conn, "link", hackedPrometheusURL)
+	// TODO: frontend should render KAS
+	// kubeconfig := fmt.Sprintf(kubeConfigTemplate, kasRoute)
+	sendWSMessage(conn, "link", kasRoute)
 
 	sendWSMessage(conn, "progress", "Waiting for pods to become ready")
 	if err := s.waitForDeploymentReady(appLabel); err != nil {
@@ -166,7 +167,7 @@ func (s *ServerSettings) createNewPrometheus(conn *websocket.Conn, rawURL string
 
 	data := map[string]string{
 		"hash": appLabel,
-		"url":  hackedPrometheusURL,
+		"url":  kasRoute,
 	}
 	sendWSMessageWithData(conn, "done", "Pod is ready", data)
 }
