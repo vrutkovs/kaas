@@ -1,0 +1,14 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: kaas
+  namespace: kaas
+  labels:
+    app: kaas
+spec:
+  lookupPolicy:
+    local: false
+  tags:
+  - name: latest
+    referencePolicy:
+      type: Source

@@ -1,0 +1,5 @@
+namespace: kaas
+bases:
+- manifests/
+patchesStrategicMerge:
+- dev/kustomize-route.yaml

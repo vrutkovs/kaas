@@ -1,0 +1,7 @@
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: kaas
+  namespace: kaas
+spec:
+  host: kaas.apps.vrutkovs.origin-gce.dev.openshift.com

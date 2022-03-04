@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: kaas-tls
+  namespace: kaas
+spec:
+  secretName: kaas-tls
+  issuerRef:
+    name: cert-issuer
+    kind: ClusterIssuer
+  dnsNames:
+  - kaas.dptools.openshift.org
