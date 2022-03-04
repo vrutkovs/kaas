@@ -132,6 +132,19 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 								"--base-dir",
 								"/must-gather/",
 							},
+							ReadinessProbe: &corev1.Probe{
+								TimeoutSeconds:   1,
+								PeriodSeconds:    10,
+								SuccessThreshold: 1,
+								FailureThreshold: 3,
+								Handler: corev1.Handler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path:   "/version",
+										Port:   intstr.FromInt(8080),
+										Scheme: "HTTP",
+									},
+								},
+							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									"cpu":    resource.MustParse("100m"),
