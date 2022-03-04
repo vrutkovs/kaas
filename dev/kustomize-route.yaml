@@ -4,4 +4,4 @@ metadata:
   name: kaas
   namespace: kaas
 spec:
-  host: kaas.apps.vrutkovs.origin-gce.dev.openshift.com
+  host: kaas.apps.ota-stage.q2z4.p1.openshiftapps.com
