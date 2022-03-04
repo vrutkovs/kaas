@@ -65,7 +65,6 @@ class DeleteAppButton extends React.Component {
 
 class Message extends React.Component {
   render() {
-    var lines = this.props.message.trim().split('\n');
     var variants = {
       "status": "info",
       "progress": "info",
@@ -90,9 +89,11 @@ class Message extends React.Component {
         )
         break;
       case 'kubeconfig':
+        var encodedKubeconfig = "data:text/yaml;charset=utf-8;base64,"+ btoa(this.props.message);
         return (
           <ReactBootstrap.Alert className="alert-small" variant="primary">
             <ReactBootstrap.Alert.Heading>Kubeconfig</ReactBootstrap.Alert.Heading>
+            <a download="kubeconfig-kaas" href={encodedKubeconfig}>Download kubeconfig</a>
             <hr/>
             <pre>{this.props.message}</pre>
           </ReactBootstrap.Alert>
