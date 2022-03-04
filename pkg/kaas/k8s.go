@@ -97,7 +97,10 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 							Command: []string{
 								"/bin/bash",
 								"-c",
-								"set -uxo pipefail && umask 0000 && curl -sL ${MUSTGATHERTAR} | tar xvz -m --no-overwrite-dir",
+								`set -uxo pipefail && \
+								 umask 0000 && \
+								 curl -sL ${MUSTGATHERTAR} | tar xvz -m --no-overwrite-dir --checkpoint=.100 && \
+								 mv */* .`,
 							},
 							WorkingDir: "/must-gather/",
 							Env: []corev1.EnvVar{
