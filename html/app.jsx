@@ -89,10 +89,12 @@ class Message extends React.Component {
           </ReactBootstrap.Alert>
         )
         break;
-      case 'link':
+      case 'kubeconfig':
         return (
           <ReactBootstrap.Alert className="alert-small" variant="primary">
-            <ReactBootstrap.Alert.Link href={this.props.message}>{this.props.message}</ReactBootstrap.Alert.Link>
+            <ReactBootstrap.Alert.Heading>Kubeconfig</ReactBootstrap.Alert.Heading>
+            <hr/>
+            <pre>{this.props.message}</pre>
           </ReactBootstrap.Alert>
         )
         break;

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -22,8 +21,7 @@ var wsupgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
-const kubeConfigTemplate = `
-apiVersion: v1
+const kubeConfigTemplate = `apiVersion: v1
 clusters:
 - cluster:
     server: %s
@@ -148,16 +146,8 @@ func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to run a new app: %s", err.Error()))
 		return
 	}
-	// Send a sample query so that user would not have to rediscover start and finished time
-	_, err = url.Parse(kasRoute)
-	if err != nil {
-		sendWSMessage(conn, "failure", err.Error())
-		return
-	}
-
-	// TODO: frontend should render KAS
-	// kubeconfig := fmt.Sprintf(kubeConfigTemplate, kasRoute)
-	sendWSMessage(conn, "link", kasRoute)
+	kubeconfig := fmt.Sprintf(kubeConfigTemplate, kasRoute)
+	sendWSMessage(conn, "kubeconfig", kubeconfig)
 
 	sendWSMessage(conn, "progress", "Waiting for pods to become ready")
 	if err := s.waitForDeploymentReady(appLabel); err != nil {
