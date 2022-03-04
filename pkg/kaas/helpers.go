@@ -22,7 +22,7 @@ const (
 	gcsPrefix            = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com"
 	storagePrefix        = "https://storage.googleapis.com"
 	artifactsPath        = "artifacts"
-	mustGatherPath       = "must-gather/must-gather.tar"
+	mustGatherPath       = "must-gather.tar"
 	mustGatherFolderPath = "gather-must-gather"
 	e2ePrefix            = "e2e"
 )
