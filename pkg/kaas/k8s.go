@@ -24,7 +24,7 @@ import (
 const (
 	deploymentRolloutTime = 5 * time.Minute
 	deploymentLifetime    = 8 * time.Hour
-	prometheusImage       = "kaas:static-kas"
+	kasImage              = "kaas:static-kas"
 	ciFetcherImage        = "registry.access.redhat.com/ubi8/ubi:8.5"
 )
 
@@ -120,7 +120,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 					Containers: []corev1.Container{
 						{
 							Name:  "kas",
-							Image: prometheusImage,
+							Image: kasImage,
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "ui",
@@ -202,7 +202,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 		return "", fmt.Errorf("failed to create new service: %s", err.Error())
 	}
 
-	promRoute := &routeApi.Route{
+	kasRoute := &routeApi.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: appLabel,
 			Labels: map[string]string{
@@ -223,7 +223,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 			},
 		},
 	}
-	route, err := s.RouteClient.Routes(s.Namespace).Create(promRoute)
+	route, err := s.RouteClient.Routes(s.Namespace).Create(kasRoute)
 	if err != nil {
 		return "", fmt.Errorf("failed to create route: %v", err)
 	}

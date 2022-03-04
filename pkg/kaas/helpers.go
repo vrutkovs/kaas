@@ -17,7 +17,6 @@ import (
 const (
 	charset              = "abcdefghijklmnopqrstuvwxyz"
 	randLength           = 8
-	promTemplates        = "prom-templates"
 	gcsLinkToken         = "gcsweb"
 	gcsPrefix            = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com"
 	storagePrefix        = "https://storage.googleapis.com"
@@ -100,7 +99,7 @@ func getMustGatherTar(conn *websocket.Conn, url string) (ProwInfo, error) {
 
 	sendWSMessage(conn, "status", fmt.Sprintf("Found must-gather archive at %s", expectedMustGatherURL))
 
-	// Check that metrics/prometheus.tar can be fetched and it non-null
+	// Check that must-gather archive can be fetched and it non-null
 	sendWSMessage(conn, "status", "Checking if must-gather archive can be fetched")
 	var netClient = &http.Client{
 		Timeout: time.Second * 10,
@@ -132,11 +131,11 @@ func getMustGatherTar(conn *websocket.Conn, url string) (ProwInfo, error) {
 func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 	prowInfo := ProwInfo{}
 
-	// Is it a direct prom tarball link?
+	// Is it a direct must-gather tarball link?
 	if strings.HasSuffix(baseURL, mustGatherPath) {
 		// Make it a fetchable URL if it's a gcsweb URL
-		tempMetricsURL := strings.Replace(baseURL, gcsPrefix+"/gcs", storagePrefix, -1)
-		prowInfo.MustGatherURL = tempMetricsURL
+		tempMustGatherURL := strings.Replace(baseURL, gcsPrefix+"/gcs", storagePrefix, -1)
+		prowInfo.MustGatherURL = tempMustGatherURL
 		return prowInfo, nil
 	}
 
@@ -222,7 +221,7 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 	}
 
 	// Support new-style jobs - look for gather-extra
-	var gatherExtraURL *url.URL
+	var gatherMustGatherURL *url.URL
 
 	e2eToplinks, err := getLinksFromURL(e2eURL.String())
 	if err != nil {
@@ -240,8 +239,8 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 		}
 		log.Printf("lastPathSection: %s", lastPathSegment)
 		if lastPathSegment == mustGatherFolderPath {
-			tmpMetricsURL := gcsPrefix + link
-			gatherExtraURL, err = url.Parse(tmpMetricsURL)
+			tmpMustGatherURL := gcsPrefix + link
+			gatherMustGatherURL, err = url.Parse(tmpMustGatherURL)
 			if err != nil {
 				return prowInfo, fmt.Errorf("failed to parse e2e link %s: %v", tmpE2eURL, err)
 			}
@@ -249,9 +248,8 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 		}
 	}
 
-	if gatherExtraURL != nil {
-		// New-style jobs may not have metrics available
-		e2eToplinks, err = getLinksFromURL(gatherExtraURL.String())
+	if gatherMustGatherURL != nil {
+		e2eToplinks, err = getLinksFromURL(gatherMustGatherURL.String())
 		if err != nil {
 			return prowInfo, fmt.Errorf("failed to fetch gather-must-gather link at %s: %v", e2eURL, err)
 		}
@@ -268,22 +266,22 @@ func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
 			log.Printf("lastPathSection: %s", lastPathSegment)
 			if lastPathSegment == artifactsPath {
 				tmpGatherExtraURL := gcsPrefix + link
-				gatherExtraURL, err = url.Parse(tmpGatherExtraURL)
+				gatherMustGatherURL, err = url.Parse(tmpGatherExtraURL)
 				if err != nil {
 					return prowInfo, fmt.Errorf("failed to parse e2e link %s: %v", tmpE2eURL, err)
 				}
 				break
 			}
 		}
-		e2eURL = gatherExtraURL
+		e2eURL = gatherMustGatherURL
 	}
 
-	gcsMetricsURL := fmt.Sprintf("%s%s", e2eURL.String(), mustGatherPath)
-	tempMetricsURL := strings.Replace(gcsMetricsURL, gcsPrefix+"/gcs", storagePrefix, -1)
-	expectedMetricsURL, err := url.Parse(tempMetricsURL)
+	gcsMustGatherURL := fmt.Sprintf("%s%s", e2eURL.String(), mustGatherPath)
+	tempMustGatherURL := strings.Replace(gcsMustGatherURL, gcsPrefix+"/gcs", storagePrefix, -1)
+	expectedMustGatherURL, err := url.Parse(tempMustGatherURL)
 	if err != nil {
-		return prowInfo, fmt.Errorf("failed to parse must-gather link %s: %v", tempMetricsURL, err)
+		return prowInfo, fmt.Errorf("failed to parse must-gather link %s: %v", tempMustGatherURL, err)
 	}
-	prowInfo.MustGatherURL = expectedMetricsURL.String()
+	prowInfo.MustGatherURL = expectedMustGatherURL.String()
 	return prowInfo, nil
 }

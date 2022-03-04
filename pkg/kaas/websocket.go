@@ -132,15 +132,15 @@ func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 	appLabel := generateAppLabel()
 	sendWSMessage(conn, "app-label", appLabel)
 
-	// Fetch metrics.tar path if prow URL specified
+	// Fetch must-gather.tar path if prow URL specified
 	prowInfo, err := getMustGatherTar(conn, rawURL)
 	if err != nil {
-		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to find metrics archive: %s", err.Error()))
+		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to find must-gather archive: %s", err.Error()))
 		return
 	}
 
 	// Create a new app in the namespace and return route
-	sendWSMessage(conn, "status", "Deploying a new prometheus instance")
+	sendWSMessage(conn, "status", "Deploying a new KAS instance")
 
 	var kasRoute string
 	mustGatherTar := prowInfo.MustGatherURL

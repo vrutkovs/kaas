@@ -28,7 +28,7 @@ type ProwJSON struct {
 	Timestamp int `json:"timestamp"`
 }
 
-// ProwInfo stores all links and data collected via scanning for metrics
+// ProwInfo stores all links and data collected via scanning for must gather
 type ProwInfo struct {
 	MustGatherURL string
 }

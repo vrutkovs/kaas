@@ -159,7 +159,7 @@ class AppsList extends React.Component {
       return false;
     }
 
-    let header = <h4>Currently running Prometheus instances</h4>
+    let header = <h4>Currently running KAS instances</h4>
     let apps = Object.keys(this.props.apps).map(k => {
       return (
         <ReactBootstrap.Row>
@@ -409,7 +409,7 @@ class SearchForm extends React.Component {
 
     return (
       <div className={searchClass}>
-        <h3>PromeCIeus</h3>
+        <h3>KAS as a service</h3>
         <SearchBar
           searchInput={this.state.searchInput}
           onSearchInput={this.handleSearchInput}
