@@ -68,6 +68,91 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 	ctx := context.TODO()
 	createOpts := metav1.CreateOptions{}
 
+	// Create service and route and fetch the host
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: appLabel,
+			Labels: map[string]string{
+				"app": appLabel,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{
+					Port:     8080,
+					Protocol: corev1.ProtocolTCP,
+					Name:     "api",
+				},
+				{
+					Port:     9000,
+					Protocol: corev1.ProtocolTCP,
+					Name:     "console",
+				},
+			},
+			Selector: map[string]string{
+				"app": appLabel,
+			},
+		},
+	}
+	_, err := s.K8sClient.CoreV1().Services(s.Namespace).Create(ctx, service, createOpts)
+	if err != nil {
+		return "", fmt.Errorf("failed to create new service: %s", err.Error())
+	}
+
+	kasAPIRoute := &routeApi.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-api", appLabel),
+			Labels: map[string]string{
+				"app": appLabel,
+			},
+		},
+		Spec: routeApi.RouteSpec{
+			To: routeApi.RouteTargetReference{
+				Kind: "Service",
+				Name: appLabel,
+			},
+			Port: &routeApi.RoutePort{
+				TargetPort: intstr.FromInt(8080),
+			},
+			TLS: &routeApi.TLSConfig{
+				Termination:                   routeApi.TLSTerminationEdge,
+				InsecureEdgeTerminationPolicy: routeApi.InsecureEdgeTerminationPolicyRedirect,
+			},
+		},
+	}
+	apiRoute, err := s.RouteClient.Routes(s.Namespace).Create(ctx, kasAPIRoute, createOpts)
+	if err != nil {
+		return "", fmt.Errorf("failed to create route: %v", err)
+	}
+	externalAPIURL := fmt.Sprintf("https://%s", apiRoute.Spec.Host)
+	consoleAPIRoute := &routeApi.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-console", appLabel),
+			Labels: map[string]string{
+				"app": appLabel,
+			},
+		},
+		Spec: routeApi.RouteSpec{
+			Path: "/",
+			To: routeApi.RouteTargetReference{
+				Kind: "Service",
+				Name: appLabel,
+			},
+			Port: &routeApi.RoutePort{
+				TargetPort: intstr.FromInt(9000),
+			},
+			TLS: &routeApi.TLSConfig{
+				Termination:                   routeApi.TLSTerminationEdge,
+				InsecureEdgeTerminationPolicy: routeApi.InsecureEdgeTerminationPolicyRedirect,
+			},
+		},
+	}
+	_, err = s.RouteClient.Routes(s.Namespace).Create(ctx, consoleAPIRoute, createOpts)
+	if err != nil {
+		return "", fmt.Errorf("failed to create route: %v", err)
+	}
+	// consoleBaseUrl := fmt.Sprintf("https://%s", consoleRoute.Spec.Host)
+
 	// Declare and create new deployment
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -160,6 +245,32 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 									MountPath: "/must-gather/",
 								},
 							},
+						}, {
+							Name:  "console",
+							Image: "quay.io/openshift/origin-console:latest",
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "ui",
+									Protocol:      corev1.ProtocolTCP,
+									ContainerPort: 9000,
+								},
+							},
+							Args: []string{
+								"/opt/bridge/bin/bridge",
+								"--public-dir=/opt/bridge/static",
+								"--k8s-mode=off-cluster",
+								fmt.Sprintf("--k8s-mode-off-cluster-endpoint=%s", externalAPIURL),
+								"--user-auth=disabled",
+								"--k8s-auth=bearer-token",
+								"--k8s-auth-bearer-token=dummy",
+								"--user-settings-location=localstorage",
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									"cpu":    resource.MustParse("100m"),
+									"memory": resource.MustParse("500Mi"),
+								},
+							},
 						},
 					},
 					ShareProcessNamespace: &sharePIDNamespace,
@@ -175,63 +286,12 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 			},
 		},
 	}
-	_, err := s.K8sClient.AppsV1().Deployments(s.Namespace).Create(ctx, deployment, createOpts)
+	_, err = s.K8sClient.AppsV1().Deployments(s.Namespace).Create(ctx, deployment, createOpts)
 	if err != nil {
 		return "", fmt.Errorf("failed to create new deployment: %s", err.Error())
 	}
 
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: appLabel,
-			Labels: map[string]string{
-				"app": appLabel,
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Ports: []corev1.ServicePort{
-				{
-					Port:     8080,
-					Protocol: corev1.ProtocolTCP,
-					Name:     "webui",
-				},
-			},
-			Selector: map[string]string{
-				"app": appLabel,
-			},
-		},
-	}
-	_, err = s.K8sClient.CoreV1().Services(s.Namespace).Create(ctx, service, createOpts)
-	if err != nil {
-		return "", fmt.Errorf("failed to create new service: %s", err.Error())
-	}
-
-	kasRoute := &routeApi.Route{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: appLabel,
-			Labels: map[string]string{
-				"app": appLabel,
-			},
-		},
-		Spec: routeApi.RouteSpec{
-			To: routeApi.RouteTargetReference{
-				Kind: "Service",
-				Name: appLabel,
-			},
-			Port: &routeApi.RoutePort{
-				TargetPort: intstr.FromInt(8080),
-			},
-			TLS: &routeApi.TLSConfig{
-				Termination:                   routeApi.TLSTerminationEdge,
-				InsecureEdgeTerminationPolicy: routeApi.InsecureEdgeTerminationPolicyRedirect,
-			},
-		},
-	}
-	route, err := s.RouteClient.Routes(s.Namespace).Create(ctx, kasRoute, createOpts)
-	if err != nil {
-		return "", fmt.Errorf("failed to create route: %v", err)
-	}
-
-	return fmt.Sprintf("https://%s", route.Spec.Host), nil
+	return externalAPIURL, nil
 }
 
 func (s *ServerSettings) waitForDeploymentReady(appLabel string) error {
