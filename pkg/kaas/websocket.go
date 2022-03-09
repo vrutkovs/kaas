@@ -141,8 +141,9 @@ func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 	sendWSMessage(conn, "status", "Deploying a new KAS instance")
 
 	var kasRoute string
+	var consoleRoute string
 	mustGatherTar := prowInfo.MustGatherURL
-	if kasRoute, err = s.launchKASApp(appLabel, mustGatherTar); err != nil {
+	if kasRoute, consoleRoute, err = s.launchKASApp(appLabel, mustGatherTar); err != nil {
 		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to run a new app: %s", err.Error()))
 		return
 	}
@@ -154,6 +155,7 @@ func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 		sendWSMessage(conn, "failure", err.Error())
 		return
 	}
+	sendWSMessage(conn, "link", consoleRoute)
 
 	data := map[string]string{
 		"hash": appLabel,

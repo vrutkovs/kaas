@@ -62,7 +62,7 @@ func TryLogin(kubeconfigPath string) (*k8s.Clientset, *routeClient.RouteV1Client
 
 }
 
-func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (string, error) {
+func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (string, string, error) {
 	replicas := int32(1)
 	sharePIDNamespace := true
 	ctx := context.TODO()
@@ -96,7 +96,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 	}
 	_, err := s.K8sClient.CoreV1().Services(s.Namespace).Create(ctx, service, createOpts)
 	if err != nil {
-		return "", fmt.Errorf("failed to create new service: %s", err.Error())
+		return "", "", fmt.Errorf("failed to create new service: %s", err.Error())
 	}
 
 	kasAPIRoute := &routeApi.Route{
@@ -122,7 +122,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 	}
 	apiRoute, err := s.RouteClient.Routes(s.Namespace).Create(ctx, kasAPIRoute, createOpts)
 	if err != nil {
-		return "", fmt.Errorf("failed to create route: %v", err)
+		return "", "", fmt.Errorf("failed to create route: %v", err)
 	}
 	externalAPIURL := fmt.Sprintf("https://%s", apiRoute.Spec.Host)
 	consoleAPIRoute := &routeApi.Route{
@@ -147,11 +147,11 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 			},
 		},
 	}
-	_, err = s.RouteClient.Routes(s.Namespace).Create(ctx, consoleAPIRoute, createOpts)
+	consoleRoute, err := s.RouteClient.Routes(s.Namespace).Create(ctx, consoleAPIRoute, createOpts)
 	if err != nil {
-		return "", fmt.Errorf("failed to create route: %v", err)
+		return "", "", fmt.Errorf("failed to create route: %v", err)
 	}
-	// consoleBaseUrl := fmt.Sprintf("https://%s", consoleRoute.Spec.Host)
+	consoleURL := fmt.Sprintf("https://%s", consoleRoute.Spec.Host)
 
 	// Declare and create new deployment
 	deployment := &appsv1.Deployment{
@@ -288,10 +288,10 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 	}
 	_, err = s.K8sClient.AppsV1().Deployments(s.Namespace).Create(ctx, deployment, createOpts)
 	if err != nil {
-		return "", fmt.Errorf("failed to create new deployment: %s", err.Error())
+		return "", "", fmt.Errorf("failed to create new deployment: %s", err.Error())
 	}
 
-	return externalAPIURL, nil
+	return externalAPIURL, consoleURL, nil
 }
 
 func (s *ServerSettings) waitForDeploymentReady(appLabel string) error {

@@ -99,6 +99,13 @@ class Message extends React.Component {
           </ReactBootstrap.Alert>
         )
         break;
+      case 'link':
+        return (
+          <ReactBootstrap.Alert className="alert-small" variant="primary">
+            <ReactBootstrap.Alert.Link href={this.props.message}>{this.props.message}</ReactBootstrap.Alert.Link>
+          </ReactBootstrap.Alert>
+        )
+        break;
       default:
         return (
           <span></span>
