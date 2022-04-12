@@ -76,7 +76,7 @@ func ensureMustGatherURL(url string) (int, error) {
 	var netClient = &http.Client{
 		Timeout: time.Second * 10,
 	}
-	resp, err := netClient.Head(url)
+	resp, err := netClient.Get(url)
 	if resp == nil {
 		return 0, err
 	}
