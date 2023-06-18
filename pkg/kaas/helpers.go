@@ -6,24 +6,25 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gorilla/websocket"
-	"golang.org/x/net/html"
 )
 
 const (
-	charset              = "abcdefghijklmnopqrstuvwxyz"
-	randLength           = 8
-	gcsLinkToken         = "gcsweb"
-	gcsPrefix            = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com"
-	storagePrefix        = "https://storage.googleapis.com"
-	artifactsPath        = "artifacts"
-	mustGatherPath       = "must-gather.tar"
-	mustGatherFolderPath = "gather-must-gather"
-	e2ePrefix            = "e2e"
+	charset    = "abcdefghijklmnopqrstuvwxyz"
+	randLength = 8
+)
+
+var (
+	// There's directories we know that definitely do not contain must-gathers, let's
+	// save ourselves the trouble.
+	ignoredPaths = []string{"namespaces", "cluster-scoped-resources", "gather-extra", "cloud.google.com"}
+
+	// Files containing cluster dumps we want to hand off to KAS
+	clusterDumps = []string{"must-gather.tar", "hypershift-dump.tar"}
 )
 
 func generateAppLabel() string {
@@ -36,252 +37,151 @@ func generateAppLabel() string {
 	return string(b)
 }
 
-func getLinksFromURL(url string) ([]string, error) {
-	links := []string{}
-
-	var netClient = &http.Client{
-		Timeout: time.Second * 10,
+func getTarPaths(conn *websocket.Conn, url string) (*ProwInfo, error) {
+	// If we got a URL directly to a tar, just use it
+	if strings.HasSuffix(url, ".tar") {
+		sendWSMessage(conn, "status", fmt.Sprintf("Found tardump at %s", url))
+		return &ProwInfo{
+			ClusterDumpURLs: []string{
+				url,
+			},
+		}, nil
 	}
-	resp, err := netClient.Get(url)
+
+	// Otherwise we got a prow or gcsweb url, and we need to find our potential artifacts
+	sendWSMessage(conn, "status", fmt.Sprintf("Finding artifacts for %s", url))
+	// Get the URL for artifacts directory
+	artifactURL, err := findArtifactURL(url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch %s: %v", url, err)
+		return nil, fmt.Errorf("couldn't get artifact url: %+v", err)
+
 	}
-	defer resp.Body.Close()
+	sendWSMessage(conn, "status", fmt.Sprintf("Found artifact url: %s", artifactURL))
 
-	z := html.NewTokenizer(resp.Body)
-	for {
-		tt := z.Next()
+	dumpURLs, err := findURLsRecursively(artifactURL, clusterDumps)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't fetch urls:% +v")
+	}
 
-		switch {
-		case tt == html.ErrorToken:
-			// End of the document, we're done
-			return links, nil
-		case tt == html.StartTagToken:
-			t := z.Token()
+	for _, u := range dumpURLs {
+		sendWSMessage(conn, "status", fmt.Sprintf("Found dump archive at %s", u))
+	}
 
-			isAnchor := t.Data == "a"
-			if isAnchor {
-				for _, a := range t.Attr {
-					if a.Key == "href" {
-						links = append(links, a.Val)
-						break
-					}
-				}
+	return &ProwInfo{
+		ClusterDumpURLs: dumpURLs,
+	}, nil
+}
+
+func newDocument(url string) (*goquery.Document, error) {
+	res, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
+	}
+
+	return goquery.NewDocumentFromReader(res.Body)
+}
+
+// findArtifactURL finds the "artifacts" directory path
+func findArtifactURL(bucketURL string) (string, error) {
+	log.Printf("finding artifacts url %s", bucketURL)
+	doc, err := newDocument(bucketURL)
+	if err != nil {
+		return "", err
+	}
+
+	// See if we're on gcsweb
+	selector := doc.Find("a:contains('artifacts/')")
+	if selector.Length() == 0 {
+		// We're not, maybe we're on prow
+		selector = doc.Find("a:contains('Artifacts')")
+		if selector.Length() != 0 {
+			gcsURL, exists := selector.Attr("href")
+			if !exists {
+				return "", fmt.Errorf("couldn't find Artifacts link")
 			}
-		}
-	}
-}
-
-func ensureMustGatherURL(url string) (int, error) {
-	var netClient = &http.Client{
-		Timeout: time.Second * 10,
-	}
-	resp, err := netClient.Get(url)
-	if resp == nil {
-		return 0, err
-	}
-	return resp.StatusCode, err
-}
-
-func getMustGatherTar(conn *websocket.Conn, url string) (ProwInfo, error) {
-	sendWSMessage(conn, "status", fmt.Sprintf("Fetching %s", url))
-	// Ensure initial URL is valid
-	statusCode, err := ensureMustGatherURL(url)
-	if err != nil || statusCode != http.StatusOK {
-		return ProwInfo{}, fmt.Errorf("failed to fetch url %s: code %d, %s", url, statusCode, err)
-	}
-
-	prowInfo, err := getTarURLFromProw(conn, url)
-	if err != nil {
-		return prowInfo, err
-	}
-	expectedMustGatherURL := prowInfo.MustGatherURL
-
-	sendWSMessage(conn, "status", fmt.Sprintf("Found must-gather archive at %s", expectedMustGatherURL))
-
-	// Check that must-gather archive can be fetched and it non-null
-	sendWSMessage(conn, "status", "Checking if must-gather archive can be fetched")
-	var netClient = &http.Client{
-		Timeout: time.Second * 10,
-	}
-	resp, err := netClient.Head(expectedMustGatherURL)
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to fetch %s: %v", expectedMustGatherURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: returned %s", expectedMustGatherURL, resp.Status)
-	}
-
-	contentLength := resp.Header.Get("content-length")
-	if contentLength == "" {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: no content length returned", expectedMustGatherURL)
-	}
-	length, err := strconv.Atoi(contentLength)
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: invalid content-length: %v", expectedMustGatherURL, err)
-	}
-	if length == 0 {
-		return prowInfo, fmt.Errorf("failed to check archive at %s: archive is empty", expectedMustGatherURL)
-	}
-	return prowInfo, nil
-}
-
-func getTarURLFromProw(conn *websocket.Conn, baseURL string) (ProwInfo, error) {
-	prowInfo := ProwInfo{}
-
-	// Is it a direct must-gather tarball link?
-	if strings.HasSuffix(baseURL, mustGatherPath) {
-		// Make it a fetchable URL if it's a gcsweb URL
-		tempMustGatherURL := strings.Replace(baseURL, gcsPrefix+"/gcs", storagePrefix, -1)
-		prowInfo.MustGatherURL = tempMustGatherURL
-		return prowInfo, nil
-	}
-
-	// Get a list of links on prow page
-	prowToplinks, err := getLinksFromURL(baseURL)
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to find links at %s: %v", prowToplinks, err)
-	}
-	if len(prowToplinks) == 0 {
-		return prowInfo, fmt.Errorf("no links found at %s", baseURL)
-	}
-	gcsTempURL := ""
-	for _, link := range prowToplinks {
-		log.Printf("link: %s", link)
-		if strings.Contains(link, gcsLinkToken) {
-			gcsTempURL = link
-			break
-		}
-	}
-	if gcsTempURL == "" {
-		return prowInfo, fmt.Errorf("failed to find GCS link in %v", prowToplinks)
-	}
-	sendWSMessage(conn, "status", fmt.Sprintf("Found gcs link at %s", baseURL))
-
-	gcsURL, err := url.Parse(gcsTempURL)
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to parse GCS URL %s: %v", gcsTempURL, err)
-	}
-
-	sendWSMessage(conn, "status", fmt.Sprintf("Found GCS URL %s", gcsURL))
-
-	// Check that 'artifacts' folder is present
-	gcsToplinks, err := getLinksFromURL(gcsURL.String())
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to fetch top-level GCS link at %s: %v", gcsURL, err)
-	}
-	if len(gcsToplinks) == 0 {
-		return prowInfo, fmt.Errorf("no top-level GCS links at %s found", gcsURL)
-	}
-	tmpArtifactsURL := ""
-	for _, link := range gcsToplinks {
-		if strings.HasSuffix(link, "artifacts/") {
-			tmpArtifactsURL = gcsPrefix + link
-			break
-		}
-	}
-	if tmpArtifactsURL == "" {
-		return prowInfo, fmt.Errorf("failed to find artifacts link in %v", gcsToplinks)
-	}
-	artifactsURL, err := url.Parse(tmpArtifactsURL)
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to parse artifacts link %s: %v", tmpArtifactsURL, err)
-	}
-
-	// Get a list of folders in find ones which contain e2e
-	artifactLinksToplinks, err := getLinksFromURL(artifactsURL.String())
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to fetch artifacts link at %s: %v", gcsURL, err)
-	}
-	if len(artifactLinksToplinks) == 0 {
-		return prowInfo, fmt.Errorf("no artifact links at %s found", gcsURL)
-	}
-	tmpE2eURL := ""
-	for _, link := range artifactLinksToplinks {
-		log.Printf("link: %s", link)
-		linkSplitBySlash := strings.Split(link, "/")
-		lastPathSegment := linkSplitBySlash[len(linkSplitBySlash)-1]
-		if len(lastPathSegment) == 0 {
-			lastPathSegment = linkSplitBySlash[len(linkSplitBySlash)-2]
-		}
-		log.Printf("lastPathSection: %s", lastPathSegment)
-		if strings.Contains(lastPathSegment, e2ePrefix) {
-			tmpE2eURL = gcsPrefix + link
-			break
-		}
-	}
-	if tmpE2eURL == "" {
-		return prowInfo, fmt.Errorf("failed to find e2e link in %v", artifactLinksToplinks)
-	}
-	e2eURL, err := url.Parse(tmpE2eURL)
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to parse e2e link %s: %v", tmpE2eURL, err)
-	}
-
-	// Support new-style jobs - look for gather-extra
-	var gatherMustGatherURL *url.URL
-
-	e2eToplinks, err := getLinksFromURL(e2eURL.String())
-	if err != nil {
-		return prowInfo, fmt.Errorf("failed to fetch artifacts link at %s: %v", e2eURL, err)
-	}
-	if len(e2eToplinks) == 0 {
-		return prowInfo, fmt.Errorf("no top links at %s found", e2eURL)
-	}
-	for _, link := range e2eToplinks {
-		log.Printf("link: %s", link)
-		linkSplitBySlash := strings.Split(link, "/")
-		lastPathSegment := linkSplitBySlash[len(linkSplitBySlash)-1]
-		if len(lastPathSegment) == 0 {
-			lastPathSegment = linkSplitBySlash[len(linkSplitBySlash)-2]
-		}
-		log.Printf("lastPathSection: %s", lastPathSegment)
-		if lastPathSegment == mustGatherFolderPath {
-			tmpMustGatherURL := gcsPrefix + link
-			gatherMustGatherURL, err = url.Parse(tmpMustGatherURL)
+			gcsURL, err = joinWithBaseURL(bucketURL, gcsURL)
 			if err != nil {
-				return prowInfo, fmt.Errorf("failed to parse e2e link %s: %v", tmpE2eURL, err)
+				return "", err
 			}
-			break
+			log.Printf("have prow url, fetching gcsweb link")
+			return findArtifactURL(gcsURL)
 		}
 	}
 
-	if gatherMustGatherURL != nil {
-		e2eToplinks, err = getLinksFromURL(gatherMustGatherURL.String())
-		if err != nil {
-			return prowInfo, fmt.Errorf("failed to fetch gather-must-gather link at %s: %v", e2eURL, err)
-		}
-		if len(e2eToplinks) == 0 {
-			return prowInfo, fmt.Errorf("no top links at %s found", e2eURL)
-		}
-		for _, link := range e2eToplinks {
-			log.Printf("link: %s", link)
-			linkSplitBySlash := strings.Split(link, "/")
-			lastPathSegment := linkSplitBySlash[len(linkSplitBySlash)-1]
-			if len(lastPathSegment) == 0 {
-				lastPathSegment = linkSplitBySlash[len(linkSplitBySlash)-2]
-			}
-			log.Printf("lastPathSection: %s", lastPathSegment)
-			if lastPathSegment == artifactsPath {
-				tmpGatherExtraURL := gcsPrefix + link
-				gatherMustGatherURL, err = url.Parse(tmpGatherExtraURL)
-				if err != nil {
-					return prowInfo, fmt.Errorf("failed to parse e2e link %s: %v", tmpE2eURL, err)
-				}
-				break
-			}
-		}
-		e2eURL = gatherMustGatherURL
+	artifactURL, exists := selector.Attr("href")
+	if !exists {
+		return "", fmt.Errorf("no href found for 'artifacts' link")
 	}
 
-	gcsMustGatherURL := fmt.Sprintf("%s%s", e2eURL.String(), mustGatherPath)
-	tempMustGatherURL := strings.Replace(gcsMustGatherURL, gcsPrefix+"/gcs", storagePrefix, -1)
-	expectedMustGatherURL, err := url.Parse(tempMustGatherURL)
+	return joinWithBaseURL(bucketURL, artifactURL)
+}
+
+// find matching paths
+func findURLsRecursively(url string, paths []string) ([]string, error) {
+	log.Printf("processing %s", url)
+	doc, err := newDocument(url)
 	if err != nil {
-		return prowInfo, fmt.Errorf("failed to parse must-gather link %s: %v", tempMustGatherURL, err)
+		return nil, err
 	}
-	prowInfo.MustGatherURL = expectedMustGatherURL.String()
-	return prowInfo, nil
+	var urls []string
+
+	doc.Find("a").Each(func(_ int, s *goquery.Selection) {
+		for _, path := range paths {
+			if strings.TrimSpace(s.Text()) == path {
+				pathURL, _ := s.Attr("href")
+				pathURL, err = joinWithBaseURL(url, pathURL)
+				if err != nil {
+					log.Printf("couldn't build url: %+v", err)
+					continue
+				}
+
+				urls = append(urls, pathURL)
+			}
+		}
+
+		if strings.HasSuffix(s.Text(), "/") {
+			subURL, exists := s.Attr("href")
+			if exists && !isIgnoredPath(subURL) {
+				subURL, _ = joinWithBaseURL(url, subURL)
+				results, err := findURLsRecursively(subURL, paths)
+				if err != nil {
+					log.Printf("encountered error at %s: %+v", subURL, err)
+					return
+				}
+
+				urls = append(urls, results...)
+			}
+		}
+	})
+
+	return urls, nil
+}
+
+func isIgnoredPath(subURL string) bool {
+	for _, path := range ignoredPaths {
+		if strings.Contains(subURL, path) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func joinWithBaseURL(baseURL, path string) (string, error) {
+	parsedBaseURL, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("couldn't parse bucket URL")
+	}
+
+	parsedRelativeURL, err := url.Parse(path)
+	if err != nil {
+		return "", fmt.Errorf("couldn't parse artifact URL")
+	}
+
+	return parsedBaseURL.ResolveReference(parsedRelativeURL).String(), nil
 }
