@@ -131,19 +131,34 @@ func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 	sendWSMessage(conn, "app-label", appLabel)
 
 	// Fetch must-gather.tar path if prow URL specified
-	prowInfo, err := getMustGatherTar(conn, rawURL)
+	prowInfo, err := getTarPaths(conn, rawURL)
 	if err != nil {
 		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to find must-gather archive: %s", err.Error()))
 		return
 	}
+
+	if len(prowInfo.ClusterDumpURLs) == 0 {
+		sendWSMessage(conn, "failure", "No dump tarballs found")
+		return
+	}
+
+	if len(prowInfo.ClusterDumpURLs) > 1 {
+		data, err := json.Marshal(prowInfo.ClusterDumpURLs)
+		if err != nil {
+			sendWSMessage(conn, "failure", fmt.Sprintf("Failed to marshal dump configs: +%v", err))
+		}
+		sendWSMessage(conn, "choose", string(data))
+		return
+	}
+
+	dumpURL := prowInfo.ClusterDumpURLs[0]
 
 	// Create a new app in the namespace and return route
 	sendWSMessage(conn, "status", "Deploying a new KAS instance")
 
 	var kasRoute string
 	var consoleRoute string
-	mustGatherTar := prowInfo.MustGatherURL
-	if kasRoute, consoleRoute, err = s.launchKASApp(appLabel, mustGatherTar); err != nil {
+	if kasRoute, consoleRoute, err = s.launchKASApp(appLabel, dumpURL); err != nil {
 		sendWSMessage(conn, "failure", fmt.Sprintf("Failed to run a new app: %s", err.Error()))
 		return
 	}

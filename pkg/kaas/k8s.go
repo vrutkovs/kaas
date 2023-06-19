@@ -62,7 +62,7 @@ func TryLogin(kubeconfigPath string) (*k8s.Clientset, *routeClient.RouteV1Client
 
 }
 
-func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (string, string, error) {
+func (s *ServerSettings) launchKASApp(appLabel string, tarBall string) (string, string, error) {
 	replicas := int32(1)
 	sharePIDNamespace := true
 	ctx := context.TODO()
@@ -153,6 +153,18 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 	}
 	consoleURL := fmt.Sprintf("https://%s", consoleRoute.Spec.Host)
 
+	cmdStr := ""
+	if strings.Contains(tarBall, "hypershift-dump.tar") {
+		// Hypershift dumps contain two sets of resources, one from the management cluster in the root,
+		// and the other from the hosted cluster in hostedcluster-XXXXXX. static-kas doesn't understand this,
+		// so we merge them together.
+		cmdStr = `cp -rfv hostedcluster-*/cluster-scoped-resources/* cluster-scoped-resources/ && \
+                  cp -rfv hostedcluster-*/namespaces/* namespaces/ && \
+                  rm -rf hostedcluster-*`
+	} else {
+		cmdStr = "mv */* ."
+	}
+
 	// Declare and create new deployment
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -186,15 +198,15 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 								"/bin/bash",
 								"-c",
 								`set -uxo pipefail && \
-								 umask 0000 && \
-								 curl -sL ${MUSTGATHERTAR} | tar xvz -m --no-overwrite-dir --checkpoint=.100 && \
-								 mv */* .`,
+								umask 0000 && \
+								curl -sL ${DUMPTAR} | tar xvz -m --no-overwrite-dir --checkpoint=.100 && ` +
+									cmdStr,
 							},
 							WorkingDir: "/must-gather/",
 							Env: []corev1.EnvVar{
 								{
-									Name:  "MUSTGATHERTAR",
-									Value: mustGatherTar,
+									Name:  "DUMPTAR",
+									Value: tarBall,
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
@@ -211,7 +223,7 @@ func (s *ServerSettings) launchKASApp(appLabel string, mustGatherTar string) (st
 							Image: kasImage,
 							Ports: []corev1.ContainerPort{
 								{
-									Name:          "ui",
+									Name:          "api",
 									Protocol:      corev1.ProtocolTCP,
 									ContainerPort: 8080,
 								},

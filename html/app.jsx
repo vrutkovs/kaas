@@ -88,6 +88,21 @@ class Message extends React.Component {
           </ReactBootstrap.Alert>
         )
         break;
+      case 'choose':
+        const items = JSON.parse(this.props.message);
+
+        return (
+            <ReactBootstrap.Alert className="alert-small" variant="primary">
+              <ReactBootstrap.Alert.Heading>Choose a Dump</ReactBootstrap.Alert.Heading>
+              <p>Multiple cluster dumps were found, please pick one:</p>
+              <hr/>
+              {items.map((item, index) => {
+                let url = new URL(window.location.href);
+                url.searchParams.set('search', item);
+                return (<p><a href={url.toString()}>{item}</a></p>)
+              })}
+            </ReactBootstrap.Alert>
+        )
       case 'kubeconfig':
         var encodedKubeconfig = "data:text/yaml;charset=utf-8;base64,"+ btoa(this.props.message);
         return (
