@@ -126,10 +126,6 @@ func (s *ServerSettings) removeKAS(conn *websocket.Conn, appName string) {
 }
 
 func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
-	// Generate a unique app label
-	appLabel := generateAppLabel()
-	sendWSMessage(conn, "app-label", appLabel)
-
 	// Fetch must-gather.tar path if prow URL specified
 	prowInfo, err := getTarPaths(conn, rawURL)
 	if err != nil {
@@ -150,6 +146,10 @@ func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 		sendWSMessage(conn, "choose", string(data))
 		return
 	}
+
+	// Generate a unique app label
+	appLabel := generateAppLabel()
+	sendWSMessage(conn, "app-label", appLabel)
 
 	dumpURL := prowInfo.ClusterDumpURLs[0]
 
