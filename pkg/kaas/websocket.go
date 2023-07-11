@@ -1,6 +1,7 @@
 package kaas
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -126,6 +127,8 @@ func (s *ServerSettings) removeKAS(conn *websocket.Conn, appName string) {
 }
 
 func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
+	ctx := context.Background()
+
 	// Generate a unique app label
 	appLabel := generateAppLabel()
 	sendWSMessage(conn, "app-label", appLabel)
@@ -166,7 +169,7 @@ func (s *ServerSettings) newKAS(conn *websocket.Conn, rawURL string) {
 	sendWSMessage(conn, "kubeconfig", kubeconfig)
 
 	sendWSMessage(conn, "progress", "Waiting for pods to become ready")
-	if err := s.waitForDeploymentReady(appLabel); err != nil {
+	if err := s.waitForDeploymentReady(ctx, appLabel); err != nil {
 		sendWSMessage(conn, "failure", err.Error())
 		return
 	}
