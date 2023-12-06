@@ -31,9 +31,14 @@ contexts:
 - context:
     cluster: static-kas
     namespace: default
+    user: admin
   name: static-kas
 current-context: static-kas
-kind: Config`
+kind: Config
+users:
+- name: admin
+  user:
+    token: dummy`
 
 func sendWSMessage(conn *websocket.Conn, action string, message string) {
 	response := WSMessage{
